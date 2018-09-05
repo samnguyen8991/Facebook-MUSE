@@ -4,6 +4,10 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
+"""
+Changes to MUSE's supervised.py:
+- Add param src_emb_dim and tgt_emb_dim
+"""
 
 import os
 import json
@@ -17,15 +21,16 @@ from src.trainer import Trainer
 from src.evaluation import Evaluator
 
 
-VALIDATION_METRIC_SUP = 'precision_at_1-csls_knn_10'
-VALIDATION_METRIC_UNSUP = 'mean_cosine-csls_knn_10-S2T-10000'
-
+# VALIDATION_METRIC = 'precision_at_1-nn'
+VALIDATION_METRIC = 'precision_at_1-csls_knn_10'
+# unsupervised criterion: 'mean_cosine-csls_knn_10-S2T-10000'
+#   supervised criterion: 'precision_at_1-csls_knn_10'
 
 # main
 parser = argparse.ArgumentParser(description='Supervised training')
 parser.add_argument("--seed", type=int, default=-1, help="Initialization seed")
 parser.add_argument("--verbose", type=int, default=2, help="Verbose level (2:debug, 1:info, 0:warning)")
-parser.add_argument("--exp_path", type=str, default="", help="Where to store experiment logs and models")
+parser.add_argument("--exp_path", type=str, default="/data1/minh/dumped/", help="Where to store experiment logs and models")
 parser.add_argument("--exp_name", type=str, default="debug", help="Experiment name")
 parser.add_argument("--exp_id", type=str, default="", help="Experiment ID")
 parser.add_argument("--cuda", type=bool_flag, default=True, help="Run on GPU")
@@ -34,7 +39,8 @@ parser.add_argument("--export", type=str, default="txt", help="Export embeddings
 # data
 parser.add_argument("--src_lang", type=str, default='en', help="Source language")
 parser.add_argument("--tgt_lang", type=str, default='es', help="Target language")
-parser.add_argument("--emb_dim", type=int, default=300, help="Embedding dimension")
+parser.add_argument("--src_emb_dim", type=int, default=300, help="Embedding dimension")
+parser.add_argument("--tgt_emb_dim", type=int, default=4096, help="Embedding dimension")
 parser.add_argument("--max_vocab", type=int, default=200000, help="Maximum vocabulary size (-1 to disable)")
 # training refinement
 parser.add_argument("--n_refinement", type=int, default=5, help="Number of refinement iterations (0 to disable the refinement procedure)")
@@ -77,10 +83,6 @@ evaluator = Evaluator(trainer)
 # one ("default") or create one based on identical character strings ("identical_char")
 trainer.load_training_dico(params.dico_train)
 
-# define the validation metric
-VALIDATION_METRIC = VALIDATION_METRIC_UNSUP if params.dico_train == 'identical_char' else VALIDATION_METRIC_SUP
-logger.info("Validation metric: %s" % VALIDATION_METRIC)
-
 """
 Learning loop for Procrustes Iterative Learning
 """
@@ -98,7 +100,8 @@ for n_iter in range(params.n_refinement + 1):
 
     # embeddings evaluation
     to_log = OrderedDict({'n_iter': n_iter})
-    evaluator.all_eval(to_log)
+    #evaluator.dist_mean_cosine(to_log)
+    evaluator.word_translation(to_log)
 
     # JSON log / save best model / end of epoch
     logger.info("__log__:%s" % json.dumps(to_log))

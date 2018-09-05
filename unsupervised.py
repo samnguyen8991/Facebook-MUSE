@@ -5,6 +5,12 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+"""
+Changes to MUSE's unsupervised:
+- Add param src_emb_dim and tgt_emb_dim, which allows source and target embeddings to have different dimensions
+- Load a ground-truth dictionary at the first iteration of Procrustes (supervision added)
+"""
+
 import os
 import time
 import json
@@ -26,7 +32,7 @@ VALIDATION_METRIC = 'mean_cosine-csls_knn_10-S2T-10000'
 parser = argparse.ArgumentParser(description='Unsupervised training')
 parser.add_argument("--seed", type=int, default=-1, help="Initialization seed")
 parser.add_argument("--verbose", type=int, default=2, help="Verbose level (2:debug, 1:info, 0:warning)")
-parser.add_argument("--exp_path", type=str, default="", help="Where to store experiment logs and models")
+parser.add_argument("--exp_path", type=str, default="/data1/minh/dumped/", help="Where to store experiment logs and models")
 parser.add_argument("--exp_name", type=str, default="debug", help="Experiment name")
 parser.add_argument("--exp_id", type=str, default="", help="Experiment ID")
 parser.add_argument("--cuda", type=bool_flag, default=True, help="Run on GPU")
@@ -34,7 +40,8 @@ parser.add_argument("--export", type=str, default="txt", help="Export embeddings
 # data
 parser.add_argument("--src_lang", type=str, default='en', help="Source language")
 parser.add_argument("--tgt_lang", type=str, default='es', help="Target language")
-parser.add_argument("--emb_dim", type=int, default=300, help="Embedding dimension")
+parser.add_argument("--src_emb_dim", type=int, default=300, help="Source embedding dimension")
+parser.add_argument("--tgt_emb_dim", type=int, default=4096, help="Target embedding dimension")
 parser.add_argument("--max_vocab", type=int, default=200000, help="Maximum vocabulary size (-1 to disable)")
 # mapping
 parser.add_argument("--map_id_init", type=bool_flag, default=True, help="Initialize the mapping as an identity matrix")
@@ -62,6 +69,7 @@ parser.add_argument("--lr_shrink", type=float, default=0.5, help="Shrink the lea
 # training refinement
 parser.add_argument("--n_refinement", type=int, default=5, help="Number of refinement iterations (0 to disable the refinement procedure)")
 # dictionary creation parameters (for refinement)
+parser.add_argument("--dico_train", type=str, default='default', help="Path to training dictionary")
 parser.add_argument("--dico_eval", type=str, default="default", help="Path to evaluation dictionary")
 parser.add_argument("--dico_method", type=str, default='csls_knn_10', help="Method used for dictionary generation (nn/invsm_beta_30/csls_knn_10)")
 parser.add_argument("--dico_build", type=str, default='S2T', help="S2T,T2S,S2T|T2S,S2T&T2S")
@@ -96,6 +104,8 @@ src_emb, tgt_emb, mapping, discriminator = build_model(params, True)
 trainer = Trainer(src_emb, tgt_emb, mapping, discriminator, params)
 evaluator = Evaluator(trainer)
 
+# load a training dictionary (supervision)
+trainer.load_training_dico(params.dico_train)
 
 """
 Learning loop for Adversarial Training
@@ -136,7 +146,7 @@ if params.adversarial:
 
         # embeddings / discriminator evaluation
         to_log = OrderedDict({'n_epoch': n_epoch})
-        evaluator.all_eval(to_log)
+        evaluator.dist_mean_cosine(to_log)
         evaluator.eval_dis(to_log)
 
         # JSON log / save best model / end of epoch
@@ -160,19 +170,21 @@ if params.n_refinement > 0:
     trainer.reload_best()
 
     # training loop
-    for n_iter in range(params.n_refinement):
-
+    for n_iter in range(params.n_refinement+1):
+        
         logger.info('Starting refinement iteration %i...' % n_iter)
-
-        # build a dictionary from aligned embeddings
-        trainer.build_dictionary()
+        
+        # build a dictionary from aligned embeddings (unless
+        # it is the first iteration and we use the init one)
+        if n_iter > 0 or not hasattr(trainer, 'dico'):
+            trainer.build_dictionary()
 
         # apply the Procrustes solution
         trainer.procrustes()
 
         # embeddings evaluation
         to_log = OrderedDict({'n_iter': n_iter})
-        evaluator.all_eval(to_log)
+        evaluator.dist_mean_cosine(to_log)
 
         # JSON log / save best model / end of epoch
         logger.info("__log__:%s" % json.dumps(to_log))
